@@ -15,6 +15,8 @@ indexes academic PDFs, Markdown files, and CSVs in a persistent Chroma database.
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Getting started](#getting-started)
+- [GitHub Codespaces](#github-codespaces)
+- [Docker Compose and Google Cloud](#docker-compose-and-google-cloud)
 - [Running document ingestion](#running-document-ingestion)
 - [API reference](#api-reference)
 - [Project structure](#project-structure)
@@ -196,6 +198,139 @@ Open [`http://localhost:3000`](http://localhost:3000). Restart the Next.js
 development server after changing the environment file. Keep machine-specific
 settings out of commits. Values prefixed with `NEXT_PUBLIC_` are exposed to
 browser-side code and must not contain secrets.
+
+## GitHub Codespaces
+
+The [`.devcontainer/`](./.devcontainer/) configuration installs Docker-in-Docker,
+starts the Compose stack when the Codespace is created, and forwards port 80.
+Open the forwarded **Academic Helpdesk** port in the Ports tab. Select a
+Codespace with enough memory and disk for Ollama; model inference speed and
+availability depend on the Codespaces machine size.
+
+The model files are not downloaded automatically. In the Codespace terminal:
+
+```bash
+docker compose exec ollama ollama pull gemma4:e4b
+docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec api python scripts/ingest_pdfs.py
+```
+
+Set a long random `ADMIN_API_TOKEN` in `.env`, then restart the API with
+`docker compose up -d --force-recreate api` to enable the review console. The
+Codespace startup script allows the forwarded URL to connect to the admin
+WebSocket. Codespaces may stop when idle; named Docker volumes preserve data
+while the Codespace exists, but this is not a production hosting substitute.
+
+## Docker Compose and Google Cloud
+
+The root [`docker-compose.yml`](./docker-compose.yml) runs the Next.js frontend,
+FastAPI backend, Ollama, and a Caddy reverse proxy. Caddy serves the site on
+port 80 (and HTTPS on 443 when configured with a domain) and routes `/api/` to
+the backend. Only the proxy publishes ports; Ollama and the API stay on the
+private Compose network. Named volumes preserve Ollama models, the Chroma
+index, conversation history, and review tickets across container restarts.
+
+### Run with Docker Compose
+
+Install Docker Engine and the Docker Compose plugin, then from the repository
+root:
+
+```bash
+cp .env.example .env
+```
+
+Set a long random `ADMIN_API_TOKEN` in `.env` if you will use `/admin`, then
+build and start the services:
+
+```bash
+docker compose up --build -d
+docker compose exec ollama ollama pull gemma4:e4b
+docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec api python scripts/ingest_pdfs.py
+```
+
+Open `http://localhost`. Ollama must have both models pulled before chat and
+document ingestion will work. To stop the services without deleting their
+persistent data, run `docker compose down`. Do not run `docker compose down -v`
+unless you intend to delete the stored models, index, and application databases.
+
+### Deploy on Google Cloud Compute Engine
+
+This Compose deployment is intended for a Compute Engine VM. A reasonable
+starting size is an `e2-standard-8` VM with a 100 GB balanced persistent boot
+disk; Ollama inference speed depends on the selected VM and model.
+
+1. In `gcloud`, select your project and choose a region/zone. Reserve a static
+   external IP, create a firewall rule for web traffic, and create an Ubuntu
+   VM with that IP and matching network tag:
+
+   ```bash
+   gcloud config set project YOUR_PROJECT_ID
+   gcloud compute addresses create academic-helpdesk-ip --region=YOUR_REGION
+   gcloud compute firewall-rules create academic-helpdesk-web \
+     --direction=INGRESS --action=ALLOW --rules=tcp:80,tcp:443 \
+     --source-ranges=0.0.0.0/0 --target-tags=academic-helpdesk-web
+   gcloud compute instances create academic-helpdesk \
+     --zone=YOUR_ZONE --machine-type=e2-standard-8 \
+     --boot-disk-size=100GB --boot-disk-type=pd-balanced \
+     --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
+     --address=academic-helpdesk-ip --tags=academic-helpdesk-web
+   ```
+
+   Get the address to use in the next step:
+
+   ```bash
+   gcloud compute addresses describe academic-helpdesk-ip \
+     --region=YOUR_REGION --format='get(address)'
+   ```
+
+   The address region must match the instance zone's region. Keep SSH access
+   restricted to your administrators; do not expose ports 8000 or 11434.
+
+2. Connect to the VM and install Docker Engine with its Compose plugin, using
+   Docker's [Ubuntu installation instructions](https://docs.docker.com/engine/install/ubuntu/).
+   Then clone the repository:
+
+   ```bash
+   gcloud compute ssh academic-helpdesk --zone=YOUR_ZONE
+   git clone https://github.com/sanskarppatil/Academic_Helpdesk_Agent.git
+   cd Academic_Helpdesk_Agent
+   cp .env.example .env
+   nano .env
+   ```
+
+3. Edit `.env` on the VM. For initial testing by external IP, use:
+
+   ```dotenv
+   SITE_ADDRESS=:80
+   ALLOWED_ORIGINS=http://YOUR_STATIC_EXTERNAL_IP
+   ADMIN_API_TOKEN=PASTE_A_LONG_RANDOM_SECRET_HERE
+   ```
+
+   Generate the admin token with `openssl rand -hex 32`. For a public
+   deployment, point a DNS A record at the VM IP, then use the domain name
+   instead: set `SITE_ADDRESS=helpdesk.example.org` and
+   `ALLOWED_ORIGINS=https://helpdesk.example.org`. Caddy will obtain and renew
+   the HTTPS certificate automatically when DNS points to the VM and ports 80
+   and 443 are reachable. Do not use the admin console over plain HTTP with a
+   real token.
+
+4. Build and start the stack, download the required Ollama models, and index
+   the bundled academic documents:
+
+   ```bash
+   sudo docker compose up --build -d
+   sudo docker compose exec ollama ollama pull gemma4:e4b
+   sudo docker compose exec ollama ollama pull nomic-embed-text
+   sudo docker compose exec api python scripts/ingest_pdfs.py
+   sudo docker compose ps
+   ```
+
+   Open `http://YOUR_STATIC_EXTERNAL_IP` for the IP-based setup or
+   `https://helpdesk.example.org` for the domain setup. Visit `/admin` and
+   enter the `ADMIN_API_TOKEN` value to use the review console. The VM's
+   persistent disk and Docker volumes retain models, indexed documents, and
+   SQLite databases; back up or snapshot the disk regularly.
 
 ## Running document ingestion
 

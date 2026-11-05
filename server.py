@@ -27,9 +27,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 ADMIN_API_TOKEN = os.getenv("ADMIN_API_TOKEN", "")
 ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
 ]
+codespace_name = os.getenv("CODESPACE_NAME")
+codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN")
+if codespace_name and codespaces_domain:
+    ALLOWED_ORIGINS.append(f"https://{codespace_name}-80.{codespaces_domain}")
 app = FastAPI(title="Academic Helpdesk Agent")
 app.add_middleware(
     CORSMiddleware,

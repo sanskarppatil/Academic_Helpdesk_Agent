@@ -1,0 +1,14 @@
+.git
+.local
+.next
+__pycache__
+*.py[cod]
+chroma_db
+frontend
+node_modules
+venv
+.venv
+.env
+.env.*
+!.env.example
+tests

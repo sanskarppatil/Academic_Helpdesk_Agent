@@ -8,7 +8,12 @@ import {
 } from "../../lib/admin-store";
 
 const API_BASE =
-  (process.env.NEXT_PUBLIC_ADMIN_API_URL || "http://127.0.0.1:8000").replace(
+  (
+    process.env.NEXT_PUBLIC_ADMIN_API_URL ||
+    (process.env.NODE_ENV === "development"
+      ? "http://127.0.0.1:8000"
+      : "/api")
+  ).replace(
     /\/+$/,
     "",
   );
@@ -95,7 +100,8 @@ export default function AdminPage() {
         0,
         ...useAdminStore.getState().tickets.map((ticket) => ticket.event_sequence),
       );
-      const socketUrl = `${API_BASE.replace(/^http/, "ws")}/admin/ws`;
+      const socketUrl = new URL(`${API_BASE}/admin/ws`, window.location.href);
+      socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(socketUrl);
       socket.onopen = () => {
         setSocketConnected(true);
