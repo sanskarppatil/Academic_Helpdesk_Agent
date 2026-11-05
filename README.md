@@ -205,7 +205,8 @@ The [`.devcontainer/`](./.devcontainer/) configuration installs Docker-in-Docker
 starts the Compose stack when the Codespace is created, and forwards port 80.
 Open the forwarded **Academic Helpdesk** port in the Ports tab. Select a
 Codespace with enough memory and disk for Ollama; model inference speed and
-availability depend on the Codespaces machine size.
+availability depend on the Codespaces machine size. Ollama runs CPU-only here,
+so chat responses can take several minutes on smaller machines.
 
 The model files are not downloaded automatically. In the Codespace terminal:
 
@@ -215,11 +216,19 @@ docker compose exec ollama ollama pull nomic-embed-text
 docker compose exec api python scripts/ingest_pdfs.py
 ```
 
-Set a long random `ADMIN_API_TOKEN` in `.env`, then restart the API with
-`docker compose up -d --force-recreate api` to enable the review console. The
-Codespace startup script allows the forwarded URL to connect to the admin
-WebSocket. Codespaces may stop when idle; named Docker volumes preserve data
-while the Codespace exists, but this is not a production hosting substitute.
+Set a long random `ADMIN_API_TOKEN` in `.env` to enable the review console. Set
+`ALLOWED_ORIGINS` there to include the exact HTTPS URL shown for port 80 in the
+Ports tab (for example, `https://YOUR-CODESPACE-80.app.github.dev`) so the
+admin WebSocket accepts the forwarded origin. Then restart the API:
+
+```bash
+docker compose up -d --force-recreate api
+```
+
+The startup script adds the forwarded origin automatically when Codespaces
+provides its name and forwarding-domain environment variables. Codespaces may
+stop when idle; named Docker volumes preserve data while the Codespace exists,
+but this is not a production hosting substitute.
 
 ## Docker Compose and Google Cloud
 
