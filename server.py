@@ -26,6 +26,7 @@ from agents.review_tickets import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 ADMIN_API_TOKEN = os.getenv("ADMIN_API_TOKEN", "")
+STREAM_KEEPALIVE_INTERVAL = 15
 ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -116,12 +117,38 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 
     async def events():
         yield _sse_event("status", {"message": "Starting your request..."})
+        agent_events: asyncio.Queue[dict[str, str] | Exception | None] = (
+            asyncio.Queue()
+        )
+
+        async def collect_agent_events() -> None:
+            try:
+                async for event in stream_agent(
+                    message=request.message,
+                    user_id=request.user_id,
+                    session_id=session_id,
+                ):
+                    await agent_events.put(event)
+            except Exception as exc:
+                await agent_events.put(exc)
+            finally:
+                await agent_events.put(None)
+
+        agent_task = asyncio.create_task(collect_agent_events())
         try:
-            async for event in stream_agent(
-                message=request.message,
-                user_id=request.user_id,
-                session_id=session_id,
-            ):
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        agent_events.get(),
+                        timeout=STREAM_KEEPALIVE_INTERVAL,
+                    )
+                except TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                if event is None:
+                    break
+                if isinstance(event, Exception):
+                    raise event
                 yield _sse_event(event["type"], event)
         except Exception:
             logger.exception("Streaming agent request failed")
@@ -131,6 +158,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             )
         else:
             yield _sse_event("done", {"session_id": session_id})
+        finally:
+            if not agent_task.done():
+                agent_task.cancel()
+            await asyncio.gather(agent_task, return_exceptions=True)
 
     return StreamingResponse(
         events(),

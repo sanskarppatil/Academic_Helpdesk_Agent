@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -79,6 +80,28 @@ class AdminApiTests(unittest.TestCase):
         self.assertIsNotNone(response.json()["published_at"])
         self.assertIn("In the main building.", (Path(self.temporary_directory.name) / "data" / "FAQ.md").read_text(encoding="utf-8"))
         clear_cache.assert_called_once()
+
+    def test_chat_stream_sends_keepalive_while_agent_is_working(self) -> None:
+        async def slow_stream_agent(**_kwargs):
+            await asyncio.sleep(0.05)
+            yield {"type": "delta", "text": "Hello"}
+
+        with (
+            patch.object(server, "stream_agent", slow_stream_agent),
+            patch.object(server, "STREAM_KEEPALIVE_INTERVAL", 0.01),
+        ):
+            response = self.client.post(
+                "/chat/stream",
+                json={"message": "Hello"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(": keep-alive\n\n", response.text)
+        self.assertIn(
+            'event: delta\ndata: {"type": "delta", "text": "Hello"}',
+            response.text,
+        )
+        self.assertIn("event: done", response.text)
 
 
 if __name__ == "__main__":
